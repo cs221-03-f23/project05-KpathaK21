@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
@@ -8,10 +9,10 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #define MAX_BUFFER_SIZE 1024
-#define WEB_ROOT "www"  // Directory where web content is stored
-
+#define WEB_ROOT "www" // Directory where web content is stored
 
 volatile sig_atomic_t stop_server = 0;
 // Signal handler
@@ -77,152 +78,247 @@ int main(int argc, char *argv[]) {
     return 0;
   }
 
-  // Read the port number from a file
-  int read_port_from_file() {
-    FILE *file = fopen("port.txt", "r");
-    if (file == NULL) {
-      perror("Error opening port file");
-      exit(EXIT_FAILURE);
-    }
-  
-    int port;
-    fscanf(file, "%d", &port);
-    fclose(file);
-  
-    return port;
+
+// Read the port number from a file
+int read_port_from_file() {
+  FILE *file = fopen("port.txt", "r");
+  if (file == NULL) {
+    perror("Error opening port file");
+    exit(EXIT_FAILURE);
   }
 
-  // Create a socket
-  int create_socket(int port) {
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd == -1) {
-      perror("socket");
-      exit(EXIT_FAILURE);
-    }
-    return sockfd;
+  int port;
+  fscanf(file, "%d", &port);
+  fclose(file);
+
+  return port;
+}
+
+// Create a socket
+int create_socket(int port) {
+  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd == -1) {
+    perror("socket");
+    exit(EXIT_FAILURE);
   }
-  
-  // Bind a socket to a specific port
-  void bind_socket(int sockfd, int port) {
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(port);
-  
-    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-      perror("bind");
-      close(sockfd);
-      exit(EXIT_FAILURE);
-    }
+  return sockfd;
+}
+
+// Bind a socket to a specific port
+void bind_socket(int sockfd, int port) {
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = htons(port);
+
+  if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+    perror("bind");
+    close(sockfd);
+    exit(EXIT_FAILURE);
+  }
+}
+
+// Listen for incoming connections
+void listen_for_connections(int sockfd) {
+  if (listen(sockfd, 3) == -1) {
+    perror("listen");
+    close(sockfd);
+    exit(EXIT_FAILURE);
+  }
+}
+
+// Accept an incoming connection
+int accept_connection(int sockfd) {
+  struct sockaddr_in client_addr;
+  socklen_t client_addrlen = sizeof(client_addr);
+
+  struct pollfd poll_fd;
+  poll_fd.fd = sockfd;
+  poll_fd.events = POLLIN;
+
+  int poll_result = poll(&poll_fd, 1, 0);
+
+  if (poll_result == -1) {
+    perror("poll");
+    return -1;
   }
 
-  // Listen for incoming connections
-  void listen_for_connections(int sockfd) {
-    if (listen(sockfd, 3) == -1) {
-      perror("listen");
-      close(sockfd);
-      exit(EXIT_FAILURE);
-    }
-  }
-  
-  // Accept an incoming connection
-  int accept_connection(int sockfd) {
-    struct sockaddr_in client_addr;
-    socklen_t client_addrlen = sizeof(client_addr);
-  
-    struct pollfd poll_fd;
-    poll_fd.fd = sockfd;
-    poll_fd.events = POLLIN;
-  
-    int poll_result = poll(&poll_fd, 1, 0);
-  
-    if (poll_result == -1) {
-      perror("poll");
+  if (poll_fd.revents & POLLIN) {
+    int client_socket =
+        accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
+
+    if (client_socket == -1) {
+      perror("accept");
       return -1;
     }
 
-    if (poll_fd.revents & POLLIN) {
-        int client_socket =
-            accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
-    
-        if (client_socket == -1) {
-          perror("accept");
-          return -1;
-        }
-    
-        return client_socket;
-      }
-    
-      return -1; // No incoming connection
-    }
-    
-    // Handle a client connection
-    void handle_client(int client_socket) {
-      // Handle HTTP request for the client
-      handle_http_request(client_socket);
-    
-      // Close the client socket
-      close(client_socket);
-    }
+    return client_socket;
+  }
+
+  return -1; // No incoming connection
+}
+
+// Handle a client connection
+void handle_client(int client_socket) {
+  // Handle HTTP request for the client
+  handle_http_request(client_socket);
+
+  // Close the client socket
+  close(client_socket);
+}
 // Handle an HTTP request from a client
 void handle_http_request(int client_socket) {
   char buffer[MAX_BUFFER_SIZE];
-
-  // Receive the HTTP request
   ssize_t recv_val;
-  while ((recv_val = recv(client_socket, buffer, MAX_BUFFER_SIZE - 1, 0)) > 0) {
-    buffer[recv_val] = '\0'; // Null-terminate the received data
 
+  while (1) {
+    recv_val = recv(client_socket, buffer, MAX_BUFFER_SIZE - 1, 0);
+
+    if (recv_val > 0) {
+      buffer[recv_val] = '\0'; // Null-terminate the received data
     // Parse the request line
     char method[MAX_BUFFER_SIZE];
     char uri[MAX_BUFFER_SIZE];
     if (sscanf(buffer, "%s %s", method, uri) != 2) {
       fprintf(stderr, "Error parsing request line\n");
-      send_error_response(client_socket, 400, "Bad Request",
-                          "Invalid request format");
+      send_error_response(client_socket, 400, "Bad Request", "Invalid request format");
       return;
     }
 
-     // Ensure the method is GET
-    if (strcmp(method, "GET") != 0) {
-      send_error_response(client_socket, 405, "Method Not Allowed",
-                          "Only GET method is allowed");
-      return;
-    }
-
-   // Extract the path from the URI
-    char *path = strtok(uri, "?");  // Remove query parameters if any
-
-    // Serve static files if requested
-    if (strstr(path, "/static/") == path) {
-      serve_static_file(client_socket, path + strlen("/static/"));
-    } else {
-      // Handle other HTTP requests
-      if (strcmp(path, "/") == 0) {
-        send_success_response(client_socket);
-      } else {
-        send_error_response(client_socket, 404, "Not Found", "Resource not found");
-      }
-    }
-
-    break;
-      }
+    // Ensure the method is GET
+        if (strcmp(method, "GET") != 0) {
+          send_error_response(client_socket, 405, "Method Not Allowed", "Only GET method is allowed");
+          return;
+        }
     
-      if (recv_val < 0) {
-        perror("recv");
-      }
+        // Extract the path from the URI
+        char *path = strtok(uri, "?");  // Remove query parameters if any
+    
+        // Serve static files if requested
+          if (strstr(path, "/static/") == path) {
+            serve_static_file(client_socket, path + strlen("/static/"));
+          } else {
+            // Handle other HTTP requests
+            if (strcmp(path, "/") == 0) {
+              send_success_response(client_socket);
+            } else {
+              send_error_response(client_socket, 404, "Not Found", "Resource not found");
+            }
+          }
+    
+          break;
+          } else if (recv_val == 0) {
+                // Connection closed by the client
+                break;
+              } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No data available at the moment, try again later
+                continue;
+              } else {
+                // Other error
+                perror("recv");
+                break;
+              }
+              }
+            
+  
   close(client_socket);
 }
 
+// Serve a static file
+void serve_static_file(int client_socket, const char *path) {
+  char file_path[MAX_BUFFER_SIZE];
+  snprintf(file_path, MAX_BUFFER_SIZE, "%s/%s", WEB_ROOT, path);
 
+  // Send the static file
+  send_file_response(client_socket, file_path);
+}
 
+// Send the content of a file as an HTTP response
+void send_file_response(int client_socket, const char *file_path) {
 
+  FILE *file = fopen(file_path, "r");
+  if (file == NULL) {
+    send_error_response(client_socket, 404, "Not Found", "File not found");
+    return;
+  }
+
+  // Get the file size
+  fseek(file, 0L, SEEK_END);
+  size_t file_size = ftell(file);
+  fseek(file, 0L, SEEK_SET);
+
+// Determine the file extension
+ const char *file_extension = strrchr(file_path, '.');
+
+ 
+  // Prepare HTTP headers with the appropriate Content-Type
+   //   char response_header[MAX_BUFFER_SIZE];
+
+ // Set the appropriate Content-Type based on the file extension
+  char content_type[MAX_BUFFER_SIZE];
+     /* if (file_extension != NULL) {
+        if (strcmp(file_extension, ".css") == 0) {
+          snprintf(response_header, MAX_BUFFER_SIZE,
+                   "HTTP/1.1 200 OK\r\nContent-Type: text/css\r\nContent-Length: %lu\r\n\r\n",
+                   file_size);
+
+                   } else {
+                         snprintf(response_header, MAX_BUFFER_SIZE,
+                                  "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %lu\r\n\r\n",
+                                  file_size);
+                       }
+                     } else {
+                       // Default to text/html if the file extension is not recognized
+                       snprintf(response_header, MAX_BUFFER_SIZE,
+                                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %lu\r\n\r\n",
+                                file_size);
+                     }*/
+
+                     if (file_extension != NULL) {
+                         if (strcmp(file_extension, ".css") == 0) {
+                           snprintf(content_type, MAX_BUFFER_SIZE, "text/css");
+                         } else {
+                           snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+                         }
+                       } else {
+                         snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+                       }
+                     
+                       // Prepare HTTP headers with the appropriate Content-Type
+                       char response_header[MAX_BUFFER_SIZE];
+                       snprintf(response_header, MAX_BUFFER_SIZE,
+                                "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
+                                content_type, file_size);
+                     
+                      // Send HTTP headers
+  ssize_t send_val = send(client_socket, response_header, strlen(response_header), 0);
+  if (send_val < 0) {
+    perror("send");
+    fclose(file);
+    close(client_socket);
+    exit(EXIT_FAILURE);
+  }
+
+// Send the file content
+  char buffer[MAX_BUFFER_SIZE];
+  size_t bytes_read;
+  while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+    send_val = send(client_socket, buffer, bytes_read, 0);
+    if (send_val < 0) {
+      perror("send");
+      fclose(file);
+      close(client_socket);
+      exit(EXIT_FAILURE);
+    }
+  }
+  fclose(file);
+}
 
 void send_success_response(int client_socket) {
-  const char *response_body = "<!DOCTYPE html>\n<html>\n  <body>\n    Hello CS "
-                              "221\n  </body>\n</html>\n";
-
-  send_response(client_socket, 200, "OK", "text/html", response_body);
+ 
+  const char *file_path = "www/index.html";  // Adjust the path based on your file structure
+  
+    send_file_response(client_socket, file_path);
 }
 
 void send_error_response(int client_socket, int status_code,
@@ -255,58 +351,6 @@ void send_response(int client_socket, int status_code, const char *status_text,
     close(client_socket);
     exit(EXIT_FAILURE);
   }
-}   	                  
-// Serve a static file
-void serve_static_file(int client_socket, const char *path) {
-  char file_path[MAX_BUFFER_SIZE];
-  snprintf(file_path, MAX_BUFFER_SIZE, "%s/%s", WEB_ROOT, path);
-
-  // Send the static file
-  send_file_response(client_socket, file_path);
 }
 
-// Send the content of a file as an HTTP response
-void send_file_response(int client_socket, const char *file_path) {
-  FILE *file = fopen(file_path, "rb");
-  if (file == NULL) {
-    send_error_response(client_socket, 404, "Not Found", "File not found");
-    return;
-  }
 
-  // Get the file size
-    fseek(file, 0L, SEEK_END);
-    size_t file_size = ftell(file);
-    fseek(file, 0L, SEEK_SET);
-  
-    // Prepare HTTP headers
-    char response_header[MAX_BUFFER_SIZE];
-    snprintf(response_header, MAX_BUFFER_SIZE,"<!DOCTYPE html>\n<html>\n  <body>\n"  
-    				 " Hello CS 221\n  </body>\n</html>\n", file_size);
-    snprintf(response_header, MAX_BUFFER_SIZE,
-             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n",
-             file_size);
-
-  // Send HTTP headers
-    ssize_t send_val = send(client_socket, response_header, strlen(response_header), 0);
-    if (send_val < 0) {
-      perror("send");
-      fclose(file);
-      close(client_socket);
-      exit(EXIT_FAILURE);
-    }
-
-    // Send the file content
-      char buffer[MAX_BUFFER_SIZE];
-      size_t bytes_read;
-      while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-        send_val = send(client_socket, buffer, bytes_read, 0);
-        if (send_val < 0) {
-          perror("send");
-          fclose(file);
-          close(client_socket);
-          exit(EXIT_FAILURE);
-        }
-      }
-    
-      fclose(file);
-    }
