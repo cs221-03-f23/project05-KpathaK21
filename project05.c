@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+
 
 #define MAX_BUFFER_SIZE 1024
 #define WEB_ROOT "www" // Directory where web content is stored
@@ -22,6 +24,16 @@ void handle_signal(int signal) {
     stop_server = 1;
   }
 }
+
+// Function to set a socket to non-blocking mode
+void set_non_blocking(int sockfd) {
+    int flags = 1;
+    if (ioctl(sockfd, FIONBIO, &flags) != 0) {
+        perror("ioctl");
+        exit(EXIT_FAILURE);
+    }
+}
+
 
 // Function prototypes
 int read_port_from_file();
@@ -44,6 +56,7 @@ void serve_static_file(int client_socket, const char *path);
 void send_file_response(int client_socket, const char *file_path);
 
 int main(int argc, char *argv[]) {
+
   // Set up signal handler for graceful shutdown
   signal(SIGINT, handle_signal);
 
@@ -65,8 +78,7 @@ int main(int argc, char *argv[]) {
     int client_socket = accept_connection(sockfd);
     if (client_socket != -1) {
       // Make the client socket non-blocking
-      int flags = fcntl(client_socket, F_GETFL, 0);
-      fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
+      set_non_blocking(client_socket);
 
       handle_client(client_socket);
     }
@@ -211,14 +223,26 @@ void handle_http_request(int client_socket) {
       break;
     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
       // No data available at the moment, try again later
-      continue;
+     struct pollfd pfd;
+            pfd.fd = client_socket;
+            pfd.events = POLLIN;
+            int poll_result = poll(&pfd, 1, 100); // 100 milliseconds timeout
+
+            if (poll_result == 0) {
+                // Timeout occurred, continue to check for data
+                continue;
+            } else if (poll_result < 0) {
+                // Poll error
+                perror("poll");
+                break;
+           }
     } else {
       // Other error
       perror("recv");
       break;
     }
-  }
-
+  
+}
   close(client_socket);
 }
 
@@ -247,9 +271,6 @@ void send_file_response(int client_socket, const char *file_path) {
 
   // Determine the file extension
   const char *file_extension = strrchr(file_path, '.');
-
-  // Prepare HTTP headers with the appropriate Content-Type
-  //   char response_header[MAX_BUFFER_SIZE];
 
   // Set the appropriate Content-Type based on the file extension
   char content_type[MAX_BUFFER_SIZE];
@@ -283,24 +304,34 @@ void send_file_response(int client_socket, const char *file_path) {
   // Send the file content
   char buffer[MAX_BUFFER_SIZE];
   size_t bytes_read;
+   size_t bytes_sent = 0;
   while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-    send_val = send(client_socket, buffer, bytes_read, 0);
-    if (send_val < 0) {
-      perror("send");
-      fclose(file);
-      close(client_socket);
-      exit(EXIT_FAILURE);
-    }
-  }
+    // Retry the send operation until all data is sent
+          ssize_t send_result;
+          do {
+              send_result = send(client_socket, buffer + bytes_sent, bytes_read - bytes_sent, 0);
+              if (send_result > 0) {
+                  bytes_sent += send_result;
+              } else if (send_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                  // Handle EAGAIN or EWOULDBLOCK by retrying the send
+                  continue;
+              } else {
+                  perror("send");
+                  fclose(file);
+                  close(client_socket);
+                  exit(EXIT_FAILURE);
+              }
+          } while (bytes_sent < bytes_read);
+          bytes_sent = 0; // Reset bytes_sent for the next iteration
+      }
   fclose(file);
 }
 
 void send_success_response(int client_socket) {
 
-  const char *file_path =
-      "www/index.html"; // Adjust the path based on your file structure
-
-  send_file_response(client_socket, file_path);
+  const char *file_path = "www/index.html"; 
+  
+   send_file_response(client_socket, file_path);
 }
 
 void send_error_response(int client_socket, int status_code,
