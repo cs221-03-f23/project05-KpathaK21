@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <sys/stat.h>
 
 #define MAX_BUFFER_SIZE 1024
 #define WEB_ROOT "www" // Directory where web content is stored
@@ -48,36 +48,35 @@ int main(int argc, char *argv[]) {
   signal(SIGINT, handle_signal);
 
   // Read port number from a file
-    int port = read_port_from_file();
-  
-    // Create and configure the server socket
-    int sockfd = create_socket(port);
-    bind_socket(sockfd, port);
-    listen_for_connections(sockfd);
-  
-    // Server main loop
-    struct pollfd fds[1];
-    fds[0].fd = sockfd;
-    fds[0].events = POLLIN;
-  
-    // Server main loop
-    while (!stop_server) {
-      int client_socket = accept_connection(sockfd);
-      if (client_socket != -1) {
-        // Make the client socket non-blocking
-        int flags = fcntl(client_socket, F_GETFL, 0);
-        fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
-  
-        handle_client(client_socket);
-      }
+  int port = read_port_from_file();
+
+  // Create and configure the server socket
+  int sockfd = create_socket(port);
+  bind_socket(sockfd, port);
+  listen_for_connections(sockfd);
+
+  // Server main loop
+  struct pollfd fds[1];
+  fds[0].fd = sockfd;
+  fds[0].events = POLLIN;
+
+  // Server main loop
+  while (!stop_server) {
+    int client_socket = accept_connection(sockfd);
+    if (client_socket != -1) {
+      // Make the client socket non-blocking
+      int flags = fcntl(client_socket, F_GETFL, 0);
+      fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
+
+      handle_client(client_socket);
     }
-  
-    // Close the server socket
-    close(sockfd);
-  
-    return 0;
   }
 
+  // Close the server socket
+  close(sockfd);
+
+  return 0;
+}
 
 // Read the port number from a file
 int read_port_from_file() {
@@ -176,51 +175,50 @@ void handle_http_request(int client_socket) {
 
     if (recv_val > 0) {
       buffer[recv_val] = '\0'; // Null-terminate the received data
-    // Parse the request line
-    char method[MAX_BUFFER_SIZE];
-    char uri[MAX_BUFFER_SIZE];
-    if (sscanf(buffer, "%s %s", method, uri) != 2) {
-      fprintf(stderr, "Error parsing request line\n");
-      send_error_response(client_socket, 400, "Bad Request", "Invalid request format");
-      return;
-    }
 
-    // Ensure the method is GET
-        if (strcmp(method, "GET") != 0) {
-          send_error_response(client_socket, 405, "Method Not Allowed", "Only GET method is allowed");
-          return;
-        }
-    
-        // Extract the path from the URI
-        char *path = strtok(uri, "?");  // Remove query parameters if any
-    
-        // Serve static files if requested
-          if (strstr(path, "/static/") == path) {
-            serve_static_file(client_socket, path + strlen("/static/"));
-          } else {
-            // Handle other HTTP requests
-            if (strcmp(path, "/") == 0) {
-              send_success_response(client_socket);
-            } else {
-              send_error_response(client_socket, 404, "Not Found", "Resource not found");
-            }
-          }
-    
-          break;
-          } else if (recv_val == 0) {
-                // Connection closed by the client
-                break;
-              } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // No data available at the moment, try again later
-                continue;
-              } else {
-                // Other error
-                perror("recv");
-                break;
-              }
-              }
-            
-  
+      // Parse the request line
+      char method[MAX_BUFFER_SIZE];
+      char uri[MAX_BUFFER_SIZE];
+      if (sscanf(buffer, "%s %s", method, uri) != 2) {
+        fprintf(stderr, "Error parsing request line\n");
+        send_error_response(client_socket, 400, "Bad Request",
+                            "Invalid request format");
+        return;
+      }
+      // Ensure the method is GET
+      if (strcmp(method, "GET") != 0) {
+        send_error_response(client_socket, 405, "Method Not Allowed",
+                            "Only GET method is allowed");
+        return;
+      }
+
+      // Extract the path from the URI
+      char *path = strtok(uri, "?"); // Remove query parameters if any
+
+      // Serve static files if requested
+      if (strstr(path, "/static/") == path) {
+        serve_static_file(client_socket, path + strlen("/static/"));
+      } else if (strcmp(path, "/") == 0) {
+        // If the path is "/", serve the main page
+        send_success_response(client_socket);
+      } else {
+        // Otherwise, treat it as a file request
+        serve_static_file(client_socket, path);
+      }
+      break;
+    } else if (recv_val == 0) {
+      // Connection closed by the client
+      break;
+    } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      // No data available at the moment, try again later
+      continue;
+    } else {
+      // Other error
+      perror("recv");
+      break;
+    }
+  }
+
   close(client_socket);
 }
 
@@ -247,51 +245,34 @@ void send_file_response(int client_socket, const char *file_path) {
   size_t file_size = ftell(file);
   fseek(file, 0L, SEEK_SET);
 
-// Determine the file extension
- const char *file_extension = strrchr(file_path, '.');
+  // Determine the file extension
+  const char *file_extension = strrchr(file_path, '.');
 
- 
   // Prepare HTTP headers with the appropriate Content-Type
-   //   char response_header[MAX_BUFFER_SIZE];
+  //   char response_header[MAX_BUFFER_SIZE];
 
- // Set the appropriate Content-Type based on the file extension
+  // Set the appropriate Content-Type based on the file extension
   char content_type[MAX_BUFFER_SIZE];
-     /* if (file_extension != NULL) {
-        if (strcmp(file_extension, ".css") == 0) {
-          snprintf(response_header, MAX_BUFFER_SIZE,
-                   "HTTP/1.1 200 OK\r\nContent-Type: text/css\r\nContent-Length: %lu\r\n\r\n",
-                   file_size);
 
-                   } else {
-                         snprintf(response_header, MAX_BUFFER_SIZE,
-                                  "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %lu\r\n\r\n",
-                                  file_size);
-                       }
-                     } else {
-                       // Default to text/html if the file extension is not recognized
-                       snprintf(response_header, MAX_BUFFER_SIZE,
-                                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %lu\r\n\r\n",
-                                file_size);
-                     }*/
+  if (file_extension != NULL) {
+    if (strcmp(file_extension, ".css") == 0) {
+      snprintf(content_type, MAX_BUFFER_SIZE, "text/css");
+    } else {
+      snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+    }
+  } else {
+    snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+  }
 
-                     if (file_extension != NULL) {
-                         if (strcmp(file_extension, ".css") == 0) {
-                           snprintf(content_type, MAX_BUFFER_SIZE, "text/css");
-                         } else {
-                           snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
-                         }
-                       } else {
-                         snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
-                       }
-                     
-                       // Prepare HTTP headers with the appropriate Content-Type
-                       char response_header[MAX_BUFFER_SIZE];
-                       snprintf(response_header, MAX_BUFFER_SIZE,
-                                "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
-                                content_type, file_size);
-                     
-                      // Send HTTP headers
-  ssize_t send_val = send(client_socket, response_header, strlen(response_header), 0);
+  // Prepare HTTP headers with the appropriate Content-Type
+  char response_header[MAX_BUFFER_SIZE];
+  snprintf(response_header, MAX_BUFFER_SIZE,
+           "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
+           content_type, file_size);
+
+  // Send HTTP headers
+  ssize_t send_val =
+      send(client_socket, response_header, strlen(response_header), 0);
   if (send_val < 0) {
     perror("send");
     fclose(file);
@@ -299,7 +280,7 @@ void send_file_response(int client_socket, const char *file_path) {
     exit(EXIT_FAILURE);
   }
 
-// Send the file content
+  // Send the file content
   char buffer[MAX_BUFFER_SIZE];
   size_t bytes_read;
   while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
@@ -315,15 +296,16 @@ void send_file_response(int client_socket, const char *file_path) {
 }
 
 void send_success_response(int client_socket) {
- 
-  const char *file_path = "www/index.html";  // Adjust the path based on your file structure
-  
-    send_file_response(client_socket, file_path);
+
+  const char *file_path =
+      "www/index.html"; // Adjust the path based on your file structure
+
+  send_file_response(client_socket, file_path);
 }
 
 void send_error_response(int client_socket, int status_code,
                          const char *status_text, const char *error_message) {
-  const char *response_body = "<!DOCTYPE html>\n<html>\n<body>\nNot "
+  const char *response_body = "<!DOCTYPE html>\n<html>\n<body>\nNot   "
                               "found\n</body>\n</html>\n";
 
   send_response(client_socket, status_code, status_text, "text/plain\n\n",
@@ -352,5 +334,3 @@ void send_response(int client_socket, int status_code, const char *status_text,
     exit(EXIT_FAILURE);
   }
 }
-
-
