@@ -2,7 +2,6 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,14 +15,7 @@
 #define MAX_BUFFER_SIZE 1024
 #define WEB_ROOT "www" // Directory where web content is stored
 
-volatile sig_atomic_t stop_server = 0;
-// Signal handler
-void handle_signal(int signal) {
-  if (signal == SIGINT) {
-    printf("Server shutting down...\n");
-    stop_server = 1;
-  }
-}
+
 
 // Function to set a socket to non-blocking mode
 void set_non_blocking(int sockfd) {
@@ -57,37 +49,32 @@ void send_file_response(int client_socket, const char *file_path);
 
 int main(int argc, char *argv[]) {
 
-  // Set up signal handler for graceful shutdown
-  signal(SIGINT, handle_signal);
-
   // Read port number from a file
-  int port = read_port_from_file();
+    int port = read_port_from_file();
 
-  // Create and configure the server socket
-  int sockfd = create_socket(port);
-  bind_socket(sockfd, port);
-  listen_for_connections(sockfd);
+    // Create and configure the server socket
+    int sockfd = create_socket(port);
+    bind_socket(sockfd, port);
+    listen_for_connections(sockfd);
 
-  // Server main loop
-  struct pollfd fds[1];
-  fds[0].fd = sockfd;
-  fds[0].events = POLLIN;
+    // Server main loop
+    while (1) {
+        int client_socket = accept_connection(sockfd);
+        if (client_socket != -1) {
+            // Make the client socket non-blocking
+            set_non_blocking(client_socket);
 
-  // Server main loop
-  while (!stop_server) {
-    int client_socket = accept_connection(sockfd);
-    if (client_socket != -1) {
-      // Make the client socket non-blocking
-      set_non_blocking(client_socket);
+            handle_client(client_socket);
 
-      handle_client(client_socket);
+            // Close the client socket
+            close(client_socket);
+        }
     }
-  }
 
-  // Close the server socket
-  close(sockfd);
+    // Close the server socket
+    close(sockfd);
 
-  return 0;
+    return 0;;
 }
 
 // Read the port number from a file
@@ -329,9 +316,12 @@ void send_file_response(int client_socket, const char *file_path) {
 
 void send_success_response(int client_socket) {
 
-  const char *file_path = "www/index.html"; 
+
+          const char *file_path = "www/index.html"; 
   
    send_file_response(client_socket, file_path);
+      
+ 
 }
 
 void send_error_response(int client_socket, int status_code,
