@@ -262,7 +262,7 @@ void send_file_response(int client_socket, const char *file_path) {
 
   // Determine the file extension and set the appropriate Content-Type
   if (file_extension != NULL) {
-    // Check the file extension and set the Content-Type accordingly
+   // Check the file extension and set the Content-Type accordingly
     if (strcmp(file_extension, ".css") == 0) {
       snprintf(content_type, MAX_BUFFER_SIZE, "text/css");
     } else if (strcmp(file_extension, ".jpg") == 0 ||
@@ -270,6 +270,8 @@ void send_file_response(int client_socket, const char *file_path) {
       snprintf(content_type, MAX_BUFFER_SIZE, "image/jpeg");
     } else if (strcmp(file_extension, ".png") == 0) {
       snprintf(content_type, MAX_BUFFER_SIZE, "image/png");
+    } else if (strcmp(file_extension, ".ico") == 0) {
+      snprintf(content_type, MAX_BUFFER_SIZE, "image/x-icon");
     } else {
       // If the file extension is not recognized, default to binary/octet-stream
       snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
@@ -278,7 +280,6 @@ void send_file_response(int client_socket, const char *file_path) {
     // If the file extension is not present, default to binary/octet-stream
     snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
   }
-
   // Prepare HTTP headers with the appropriate Content-Type and Content-Disposition
     char response_header[MAX_BUFFER_SIZE];
     snprintf(response_header, MAX_BUFFER_SIZE,
