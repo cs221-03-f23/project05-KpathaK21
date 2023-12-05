@@ -257,7 +257,7 @@ void send_file_response(int client_socket, const char *file_path) {
   // Determine the file extension
   const char *file_extension = strrchr(file_path, '.');
 
-  // Set the appropriate Content-Type based on the file extension
+   // Set the appropriate Content-Type based on the file extension
   char content_type[MAX_BUFFER_SIZE];
 
   // Determine the file extension and set the appropriate Content-Type
@@ -272,53 +272,53 @@ void send_file_response(int client_socket, const char *file_path) {
       snprintf(content_type, MAX_BUFFER_SIZE, "image/png");
     } else {
       // If the file extension is not recognized, default to binary/octet-stream
-      snprintf(content_type, MAX_BUFFER_SIZE, "application/octet-stream");
+      snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
     }
   } else {
     // If the file extension is not present, default to binary/octet-stream
-    snprintf(content_type, MAX_BUFFER_SIZE, "application/octet-stream");
+    snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
   }
 
-  // Prepare HTTP headers with the appropriate Content-Type
-  char response_header[MAX_BUFFER_SIZE];
-  snprintf(response_header, MAX_BUFFER_SIZE,
-           "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %lu\r\n\r\n",
-           content_type, file_size);
+  // Prepare HTTP headers with the appropriate Content-Type and Content-Disposition
+    char response_header[MAX_BUFFER_SIZE];
+    snprintf(response_header, MAX_BUFFER_SIZE,
+             "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Disposition: inline\r\nContent-Length: %lu\r\n\r\n",
+             content_type, file_size);
+  
+    // Send HTTP headers
+    ssize_t send_val =
+        send(client_socket, response_header, strlen(response_header), 0);
+    if (send_val < 0) {
+      perror("send");
+      fclose(file);
+      close(client_socket);
+      exit(EXIT_FAILURE);
+    }
 
-  // Send HTTP headers
-  ssize_t send_val =
-      send(client_socket, response_header, strlen(response_header), 0);
-  if (send_val < 0) {
-    perror("send");
-    fclose(file);
-    close(client_socket);
-    exit(EXIT_FAILURE);
-  }
-
-  // Send the file content
-  char buffer[MAX_BUFFER_SIZE];
-  size_t bytes_read;
-  size_t bytes_sent = 0;
-  while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
-    // Retry the send operation until all data is sent
-    ssize_t send_result;
-    do {
-      send_result =
-          send(client_socket, buffer + bytes_sent, bytes_read - bytes_sent, 0);
-      if (send_result > 0) {
-        bytes_sent += send_result;
-      } else if (send_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        // Handle EAGAIN or EWOULDBLOCK by retrying the send
-        continue;
-      } else {
-        perror("send");
-        fclose(file);
-        close(client_socket);
-        exit(EXIT_FAILURE);
+    // Send the file content
+      char buffer[MAX_BUFFER_SIZE];
+      size_t bytes_read;
+      size_t bytes_sent = 0;
+      while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
+        // Retry the send operation until all data is sent
+        ssize_t send_result;
+        do {
+          send_result =
+              send(client_socket, buffer + bytes_sent, bytes_read - bytes_sent, 0);
+          if (send_result > 0) {
+            bytes_sent += send_result;
+          } else if (send_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            // Handle EAGAIN or EWOULDBLOCK by retrying the send
+            continue;
+          } else {
+            perror("send");
+            fclose(file);
+            close(client_socket);
+            exit(EXIT_FAILURE);
+          }
+        } while (bytes_sent < bytes_read);
+        bytes_sent = 0; // Reset bytes_sent for the next iteration
       }
-    } while (bytes_sent < bytes_read);
-    bytes_sent = 0; // Reset bytes_sent for the next iteration
-  }
   fclose(file);
 }
 
