@@ -5,27 +5,26 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <sys/ioctl.h>
-
 
 #define MAX_BUFFER_SIZE 1024
 #define WEB_ROOT "www" // Directory where web content is stored
 
-
+// Add this function at the beginning
+void log_error(const char *message) { fprintf(stderr, "Error: %s\n", message); }
 
 // Function to set a socket to non-blocking mode
 void set_non_blocking(int sockfd) {
-    int flags = 1;
-    if (ioctl(sockfd, FIONBIO, &flags) != 0) {
-        perror("ioctl");
-        exit(EXIT_FAILURE);
-    }
+  int flags = 1;
+  if (ioctl(sockfd, FIONBIO, &flags) != 0) {
+    perror("ioctl");
+    exit(EXIT_FAILURE);
+  }
 }
-
 
 // Function prototypes
 int read_port_from_file();
@@ -50,31 +49,32 @@ void send_file_response(int client_socket, const char *file_path);
 int main(int argc, char *argv[]) {
 
   // Read port number from a file
-    int port = read_port_from_file();
+  int port = read_port_from_file();
 
-    // Create and configure the server socket
-    int sockfd = create_socket(port);
-    bind_socket(sockfd, port);
-    listen_for_connections(sockfd);
+  // Create and configure the server socket
+  int sockfd = create_socket(port);
+  bind_socket(sockfd, port);
+  listen_for_connections(sockfd);
 
-    // Server main loop
-    while (1) {
-        int client_socket = accept_connection(sockfd);
-        if (client_socket != -1) {
-            // Make the client socket non-blocking
-            set_non_blocking(client_socket);
+  // Server main loop
+  while (1) {
+    int client_socket = accept_connection(sockfd);
+    if (client_socket != -1) {
+      // Make the client socket non-blocking
+      set_non_blocking(client_socket);
 
-            handle_client(client_socket);
+      handle_client(client_socket);
 
-            // Close the client socket
-            close(client_socket);
-        }
+      // Close the client socket
+      close(client_socket);
     }
+  }
 
-    // Close the server socket
-    close(sockfd);
+  // Close the server socket
+  close(sockfd);
 
-    return 0;;
+  return 0;
+  ;
 }
 
 // Read the port number from a file
@@ -210,26 +210,25 @@ void handle_http_request(int client_socket) {
       break;
     } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
       // No data available at the moment, try again later
-     struct pollfd pfd;
-            pfd.fd = client_socket;
-            pfd.events = POLLIN;
-            int poll_result = poll(&pfd, 1, 100); // 100 milliseconds timeout
+      struct pollfd pfd;
+      pfd.fd = client_socket;
+      pfd.events = POLLIN;
+      int poll_result = poll(&pfd, 1, 100); // 100 milliseconds timeout
 
-            if (poll_result == 0) {
-                // Timeout occurred, continue to check for data
-                continue;
-            } else if (poll_result < 0) {
-                // Poll error
-                perror("poll");
-                break;
-           }
+      if (poll_result == 0) {
+        // Timeout occurred, continue to check for data
+        continue;
+      } else if (poll_result < 0) {
+        // Poll error
+        perror("poll");
+        break;
+      }
     } else {
       // Other error
       perror("recv");
       break;
     }
-  
-}
+  }
   close(client_socket);
 }
 
@@ -244,7 +243,6 @@ void serve_static_file(int client_socket, const char *path) {
 
 // Send the content of a file as an HTTP response
 void send_file_response(int client_socket, const char *file_path) {
-
   FILE *file = fopen(file_path, "r");
   if (file == NULL) {
     send_error_response(client_socket, 404, "Not Found", "File not found");
@@ -262,14 +260,23 @@ void send_file_response(int client_socket, const char *file_path) {
   // Set the appropriate Content-Type based on the file extension
   char content_type[MAX_BUFFER_SIZE];
 
+  // Determine the file extension and set the appropriate Content-Type
   if (file_extension != NULL) {
+    // Check the file extension and set the Content-Type accordingly
     if (strcmp(file_extension, ".css") == 0) {
       snprintf(content_type, MAX_BUFFER_SIZE, "text/css");
+    } else if (strcmp(file_extension, ".jpg") == 0 ||
+               strcmp(file_extension, ".jpeg") == 0) {
+      snprintf(content_type, MAX_BUFFER_SIZE, "image/jpeg");
+    } else if (strcmp(file_extension, ".png") == 0) {
+      snprintf(content_type, MAX_BUFFER_SIZE, "image/png");
     } else {
-      snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+      // If the file extension is not recognized, default to binary/octet-stream
+      snprintf(content_type, MAX_BUFFER_SIZE, "application/octet-stream");
     }
   } else {
-    snprintf(content_type, MAX_BUFFER_SIZE, "text/html");
+    // If the file extension is not present, default to binary/octet-stream
+    snprintf(content_type, MAX_BUFFER_SIZE, "application/octet-stream");
   }
 
   // Prepare HTTP headers with the appropriate Content-Type
@@ -291,37 +298,35 @@ void send_file_response(int client_socket, const char *file_path) {
   // Send the file content
   char buffer[MAX_BUFFER_SIZE];
   size_t bytes_read;
-   size_t bytes_sent = 0;
+  size_t bytes_sent = 0;
   while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0) {
     // Retry the send operation until all data is sent
-          ssize_t send_result;
-          do {
-              send_result = send(client_socket, buffer + bytes_sent, bytes_read - bytes_sent, 0);
-              if (send_result > 0) {
-                  bytes_sent += send_result;
-              } else if (send_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                  // Handle EAGAIN or EWOULDBLOCK by retrying the send
-                  continue;
-              } else {
-                  perror("send");
-                  fclose(file);
-                  close(client_socket);
-                  exit(EXIT_FAILURE);
-              }
-          } while (bytes_sent < bytes_read);
-          bytes_sent = 0; // Reset bytes_sent for the next iteration
+    ssize_t send_result;
+    do {
+      send_result =
+          send(client_socket, buffer + bytes_sent, bytes_read - bytes_sent, 0);
+      if (send_result > 0) {
+        bytes_sent += send_result;
+      } else if (send_result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        // Handle EAGAIN or EWOULDBLOCK by retrying the send
+        continue;
+      } else {
+        perror("send");
+        fclose(file);
+        close(client_socket);
+        exit(EXIT_FAILURE);
       }
+    } while (bytes_sent < bytes_read);
+    bytes_sent = 0; // Reset bytes_sent for the next iteration
+  }
   fclose(file);
 }
 
 void send_success_response(int client_socket) {
 
+  const char *file_path = "www/index.html";
 
-          const char *file_path = "www/index.html"; 
-  
-   send_file_response(client_socket, file_path);
-      
- 
+  send_file_response(client_socket, file_path);
 }
 
 void send_error_response(int client_socket, int status_code,
